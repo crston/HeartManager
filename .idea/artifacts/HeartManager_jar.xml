@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="HeartManager:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/HeartManager_jar</output-path>
+    <root id="archive" name="HeartManager.jar">
+      <element id="module-output" name="HeartManager" />
+    </root>
+  </artifact>
+</component>

@@ -1,0 +1,16 @@
+# HeartManager Settings
+settings:
+  # Heart (20.0 = 10)
+  heart-scale: 20.0
+
+  # Action Bar Message
+  actionbar:
+    enabled: false
+    format: "&7[ &c❤ &fHP: <current> &7/ &f<max> &7]"
+
+  # BossBar Message
+  bossbar:
+    enabled: false
+    title: "&c&lHP &f<current> / <max>"
+    # Bossbar Style: SOLID, SEGMENTED_6, SEGMENTED_10, SEGMENTED_12, SEGMENTED_20
+    style: SEGMENTED_10
