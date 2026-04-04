@@ -1,5 +1,13 @@
 package com.gmail.bobason01;
 
+import com.comphenix.protocol.PacketType;
+import com.comphenix.protocol.ProtocolLibrary;
+import com.comphenix.protocol.ProtocolManager;
+import com.comphenix.protocol.events.ListenerPriority;
+import com.comphenix.protocol.events.PacketAdapter;
+import com.comphenix.protocol.events.PacketContainer;
+import com.comphenix.protocol.events.PacketEvent;
+import com.comphenix.protocol.wrappers.WrappedAttribute;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
@@ -23,13 +31,16 @@ import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 public class HeartManager extends JavaPlugin implements Listener, CommandExecutor {
 
     private final Map<UUID, BossBar> bossBars = new HashMap<>();
+    private ProtocolManager protocolManager;
 
     @Override
     public void onEnable() {
@@ -40,11 +51,48 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
             getCommand("heartmanager").setExecutor(this);
         }
 
+        protocolManager = ProtocolLibrary.getProtocolManager();
+        registerPacketListener();
+
         for (Player player : Bukkit.getOnlinePlayers()) {
-            setupPlayer(player);
+            refreshPlayer(player);
         }
 
-        getLogger().info("HeartManager Plugin Enabled.");
+        getLogger().info("HeartManager Enabled with ProtocolLib.");
+    }
+
+    private void registerPacketListener() {
+        protocolManager.addPacketListener(new PacketAdapter(this, ListenerPriority.HIGHEST, PacketType.Play.Server.UPDATE_ATTRIBUTES) {
+            @Override
+            public void onPacketSending(PacketEvent event) {
+                PacketContainer packet = event.getPacket();
+
+                // 패킷의 엔티티 ID가 해당 플레이어인지 확인
+                if (event.getPlayer().getEntityId() != packet.getIntegers().read(0)) {
+                    return;
+                }
+
+                // 속성 리스트 가져오기
+                List<WrappedAttribute> attributes = packet.getAttributeCollectionModifier().read(0);
+                List<WrappedAttribute> newAttributes = new ArrayList<>();
+
+                for (WrappedAttribute attr : attributes) {
+                    // 최대 체력 속성인지 확인 (1.13+ 버전 대응 포함)
+                    if (attr.getAttributeKey().equals("minecraft:generic.max_health") || attr.getAttributeKey().equals("generic.max_health")) {
+                        // 새로운 빌더를 사용하여 베이스 값을 20.0으로 고정한 속성 생성
+                        WrappedAttribute modified = WrappedAttribute.newBuilder(attr)
+                                .baseValue(20.0)
+                                .build();
+                        newAttributes.add(modified);
+                    } else {
+                        newAttributes.add(attr);
+                    }
+                }
+
+                // 수정된 리스트로 패킷 갱신
+                packet.getAttributeCollectionModifier().write(0, newAttributes);
+            }
+        });
     }
 
     @Override
@@ -62,25 +110,20 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
                 sender.sendMessage(ChatColor.RED + "No Permissions.");
                 return true;
             }
-
             reloadConfig();
-
             for (Player player : Bukkit.getOnlinePlayers()) {
-                setupPlayer(player);
+                refreshPlayer(player);
             }
-
             sender.sendMessage(ChatColor.GREEN + "HeartManager Config Reloaded.");
             return true;
         }
-
         sender.sendMessage(ChatColor.YELLOW + "/hm reload - Config Reload.");
         return true;
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onJoin(PlayerJoinEvent event) {
-        // 접속 직후 패킷 꼬임 방지를 위해 2틱 지연
-        Bukkit.getScheduler().runTaskLater(this, () -> setupPlayer(event.getPlayer()), 2L);
+        refreshPlayer(event.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -90,46 +133,26 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onRespawn(PlayerRespawnEvent event) {
-        // 리스폰 시에는 체력이 가득 찬 상태이므로 안전하게 지연 적용
-        Bukkit.getScheduler().runTaskLater(this, () -> setupPlayer(event.getPlayer()), 2L);
+        Bukkit.getScheduler().runTaskLater(this, () -> refreshPlayer(event.getPlayer()), 1L);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onDamage(EntityDamageEvent event) {
         if (event.getEntity() instanceof Player) {
-            // 데미지를 입은 직후 바로 업데이트하지 않고 1틱 뒤에 호출 (정확한 체력 계산을 위함)
-            Bukkit.getScheduler().runTask(this, () -> updateDisplay((Player) event.getEntity()));
+            updateDisplay((Player) event.getEntity());
         }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onHeal(EntityRegainHealthEvent event) {
         if (event.getEntity() instanceof Player) {
-            Bukkit.getScheduler().runTask(this, () -> updateDisplay((Player) event.getEntity()));
+            updateDisplay((Player) event.getEntity());
         }
     }
 
-    private void setupPlayer(Player player) {
-        double scale = getConfig().getDouble("settings.heart-scale", 20.0);
-
-        // 1. 먼저 스케일링을 비활성화하여 초기화
+    private void refreshPlayer(Player player) {
+        // 기존 스케일 설정 해제
         player.setHealthScaled(false);
-
-        // 2. 최대 체력 속성을 가져옴
-        AttributeInstance maxAttr = player.getAttribute(Attribute.GENERIC_MAX_HEALTH);
-        if (maxAttr == null) return;
-
-        double maxHealth = maxAttr.getValue();
-
-        // 3. 현재 체력이 최대 체력을 초과하지 않도록 강제 조정 (애니메이션 버그의 핵심 원인)
-        if (player.getHealth() > maxHealth) {
-            player.setHealth(maxHealth);
-        }
-
-        // 4. 스케일 적용 (20.0이면 하트 10칸)
-        player.setHealthScale(scale);
-        player.setHealthScaled(true);
-
         updateDisplay(player);
     }
 
@@ -140,7 +163,6 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
         AttributeInstance maxAttr = player.getAttribute(Attribute.GENERIC_MAX_HEALTH);
         double maxHealth = (maxAttr != null) ? maxAttr.getValue() : 20.0;
 
-        // 비율 계산 시 0으로 나누기 방지
         double ratio = (maxHealth > 0) ? Math.max(0.0, Math.min(1.0, currentHealth / maxHealth)) : 0;
 
         if (getConfig().getBoolean("settings.actionbar.enabled", true)) {

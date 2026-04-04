@@ -1,10 +1,14 @@
 name: HeartManager
-version: 1.0
+version: 10.0
 main: com.gmail.bobason01.HeartManager
-author: crston
 api-version: 1.20
+depend: [ProtocolLib]
+author: crston
 commands:
   heartmanager:
     description: HeartManager Main Command
     aliases: [hm]
-    permission: heartmanager.admin
+permissions:
+  heartmanager.admin:
+    description: HeartManager Admin Permission
+    default: op
