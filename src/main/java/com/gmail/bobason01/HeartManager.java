@@ -7,7 +7,7 @@ import com.comphenix.protocol.events.ListenerPriority;
 import com.comphenix.protocol.events.PacketAdapter;
 import com.comphenix.protocol.events.PacketContainer;
 import com.comphenix.protocol.events.PacketEvent;
-import com.comphenix.protocol.wrappers.WrappedAttribute;
+import com.comphenix.protocol.reflect.StructureModifier;
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
@@ -58,7 +58,7 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
             refreshPlayer(player);
         }
 
-        getLogger().info("HeartManager Enabled with ProtocolLib.");
+        getLogger().info("HeartManager Enabled with ProtocolLib fix for 1.21.1");
     }
 
     private void registerPacketListener() {
@@ -67,30 +67,60 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
             public void onPacketSending(PacketEvent event) {
                 PacketContainer packet = event.getPacket();
 
-                // 패킷의 엔티티 ID가 해당 플레이어인지 확인
-                if (event.getPlayer().getEntityId() != packet.getIntegers().read(0)) {
+                // 패킷의 엔티티 ID 확인
+                int entityId = packet.getIntegers().read(0);
+                if (event.getPlayer().getEntityId() != entityId) {
                     return;
                 }
 
-                // 속성 리스트 가져오기
-                List<WrappedAttribute> attributes = packet.getAttributeCollectionModifier().read(0);
-                List<WrappedAttribute> newAttributes = new ArrayList<>();
+                try {
+                    // 1. 제네릭 타입 경고 및 불일치 해결을 위해 와일드카드 없이 List로 수신
+                    // 2. getNullableClass 대신 직접 클래스명을 사용하거나 getSpecificModifier 이용
+                    StructureModifier<List> modifier = packet.getSpecificModifier(List.class);
 
-                for (WrappedAttribute attr : attributes) {
-                    // 최대 체력 속성인지 확인 (1.13+ 버전 대응 포함)
-                    if (attr.getAttributeKey().equals("minecraft:generic.max_health") || attr.getAttributeKey().equals("generic.max_health")) {
-                        // 새로운 빌더를 사용하여 베이스 값을 20.0으로 고정한 속성 생성
-                        WrappedAttribute modified = WrappedAttribute.newBuilder(attr)
-                                .baseValue(20.0)
-                                .build();
-                        newAttributes.add(modified);
-                    } else {
-                        newAttributes.add(attr);
+                    List<?> attributes = modifier.read(0);
+                    if (attributes == null) return;
+
+                    List<Object> newAttributes = new ArrayList<>();
+                    boolean modified = false;
+
+                    for (Object attrObj : attributes) {
+                        try {
+                            // WrappedAttribute로 변환 시도
+                            com.comphenix.protocol.wrappers.WrappedAttribute attr = com.comphenix.protocol.wrappers.WrappedAttribute.fromHandle(attrObj);
+
+                            String key = "";
+                            try {
+                                // 1.21.1에서 WrappedRegistry 문제로 에러 발생 가능성 대비
+                                key = attr.getAttributeKey();
+                            } catch (Throwable t) {
+                                newAttributes.add(attrObj);
+                                continue;
+                            }
+
+                            if (key != null && (key.contains("max_health"))) {
+                                // 하트 개수 시각적 고정을 위해 baseValue를 20.0으로 수정
+                                Object modifiedHandle = com.comphenix.protocol.wrappers.WrappedAttribute.newBuilder(attr)
+                                        .baseValue(20.0)
+                                        .build()
+                                        .getHandle();
+                                newAttributes.add(modifiedHandle);
+                                modified = true;
+                            } else {
+                                newAttributes.add(attrObj);
+                            }
+                        } catch (Exception innerE) {
+                            newAttributes.add(attrObj);
+                        }
                     }
-                }
 
-                // 수정된 리스트로 패킷 갱신
-                packet.getAttributeCollectionModifier().write(0, newAttributes);
+                    if (modified) {
+                        // 수정된 리스트를 다시 패킷에 기록
+                        modifier.write(0, newAttributes);
+                    }
+                } catch (Exception e) {
+                    // 에러 발생 시 원본 패킷이 그대로 전송되도록 둠
+                }
             }
         });
     }
@@ -151,7 +181,6 @@ public class HeartManager extends JavaPlugin implements Listener, CommandExecuto
     }
 
     private void refreshPlayer(Player player) {
-        // 기존 스케일 설정 해제
         player.setHealthScaled(false);
         updateDisplay(player);
     }
